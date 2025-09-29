@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AI Video Threat Detection</title>
+  <link rel="stylesheet" href="/static/style/style.css"> 
+</head>
+<body>
+  <div class="container">
+    <h1>🎥 AI-Powered Video Threat Detection</h1>
+    <div class="subtitle">Upload a video file for security analysis and threat detection.</div>
+
+    <form id="uploadForm">
+      <label for="videoFile" class="upload-area">
+          <div class="upload-icon">⬆️</div>
+          <div class="upload-text">Drag & drop a video or</div>
+          <input type="file" id="videoFile" name="video" accept="video/*" required>
+          <span class="upload-label">Browse Files</span>
+      </label>
+      
+      <div class="supported-formats">Supported formats: MP4, MOV, AVI, etc.</div>
+
+      <button id="uploadBtn" type="submit" class="upload-label" style="display: block; margin: 32px auto 0 auto;">
+        Upload & Analyze
+      </button>
+    </form>
+
+    <div id="reportArea" style="margin-top: 40px; text-align: left;">
+      <h2>📊 Detection Report</h2>
+      <div id="status" style="font-weight: 600; color: #4f8cff;">Ready to analyze.</div>
+      
+      <h3 style="margin-top:24px;">Summary:</h3>
+      <div id="summary" style="margin-top: 8px; background: #f6f8fa; padding: 12px; border-radius: 8px; overflow-x: auto;">
+          <pre style="white-space: pre-wrap; word-wrap: break-word;">No report yet. Upload a video to start analysis.</pre>
+      </div>
+
+      <h3 style="margin-top:24px;">Alerts:</h3>
+      <div id="alerts" style="margin-top: 8px;">
+          <div style='color:#666;'>No alerts to display.</div>
+      </div>
+
+      <div id="cropGallery">
+        <h3 style="margin-top:24px;">⚠️ Cropped Threats (Unique)</h3>
+        <div id="thumbnails" class="thumb-grid" style="display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px;">
+             <div style='color:#666'>No cropped threats to display.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const statusEl = document.getElementById('status');
+    const summaryEl = document.getElementById('summary');
+    const alertsEl = document.getElementById('alerts');
+    const thumbsEl = document.getElementById('thumbnails');
+    const videoFileEl = document.getElementById('videoFile');
+    const uploadArea = document.querySelector('.upload-area');
+
+    // Add visual feedback when a file is selected
+    videoFileEl.addEventListener('change', () => {
+        if (videoFileEl.files.length) {
+            uploadArea.classList.add('file-selected');
+            uploadArea.querySelector('.upload-text').innerText = `File selected: ${videoFileEl.files[0].name}`;
+        } else {
+            uploadArea.classList.remove('file-selected');
+            uploadArea.querySelector('.upload-text').innerText = "Drag & drop a video or";
+        }
+    });
+
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      if (!videoFileEl.files.length) return alert("Choose a video file first.");
+
+      const formData = new FormData();
+      formData.append('video', videoFileEl.files[0]);
+
+      uploadBtn.disabled = true;
+      uploadBtn.innerText = "Analyzing...";
+      statusEl.style.color = '#ffb020';
+      statusEl.innerText = "Processing... (this may take a while depending on video length)";
+      summaryEl.innerHTML = "<pre style='text-align:center;'>...</pre>";
+      alertsEl.innerHTML = "<div style='color:#666;text-align:center;'>Processing...</div>";
+      thumbsEl.innerHTML = "<div style='color:#666;text-align:center;'>Processing...</div>";
+
+      // call backend
+      try {
+        const res = await fetch('/analyze', { method: 'POST', body: formData });
+        
+        if (!res.ok) {
+          // Handle FastAPI's JSON response for errors
+          const err = await res.json().catch(()=>({detail:'Server error or non-JSON response'}));
+          statusEl.style.color = '#ff4d4f';
+          statusEl.innerText = "Error: " + (err.detail || 'Analysis failed (HTTP Status ' + res.status + ')');
+          return;
+        }
+        
+        const data = await res.json();
+
+        // show summary
+        if (Object.keys(data.report || {}).length === 0) {
+          summaryEl.innerHTML = "<pre>No objects of interest found.</pre>";
+        } else {
+          // Display detection counts clearly
+          let report_str = "Detected objects and total frames seen:\n";
+          for (const [key, value] of Object.entries(data.report)) {
+              report_str += `- ${key}: ${value} times\n`;
+          }
+          summaryEl.innerHTML = `<pre>${report_str}</pre>`;
+        }
+
+        // alerts
+        if (data.alerts && data.alerts.length) {
+          alertsEl.innerHTML = data.alerts.map(a => `<div class="alert" style="color:#ff4d4f; font-weight: 600; margin-top: 8px;">${a}</div>`).join("");
+        } else {
+          alertsEl.innerHTML = "<div style='margin-top:8px;color:green;'>✅ No high-risk threat alerts.</div>";
+        }
+
+        // gallery of unique crops
+        thumbsEl.innerHTML = "";
+        if (data.crops && data.crops.length) {
+          data.crops.forEach(c => {
+            const div = document.createElement('div');
+            div.className = "thumb";
+            div.style.cssText = "width: 150px; text-align: center; border: 1px solid #e3e8f0; border-radius: 12px; padding: 8px;";
+            div.innerHTML = `
+              <a href="${c.url}" target="_blank" style="display:block; height: 100px; overflow: hidden; margin-bottom: 8px;">
+                <img src="${c.url}" alt="${c.label}" style="width: 100%; height: auto; border-radius: 8px;">
+              </a>
+              <div class="meta" style="font-size: 0.9rem;">
+                <strong>${c.label}</strong><br>
+                ts: ${c.timestamp}<br>
+                conf: ${Math.round(c.confidence * 100)}%
+              </div>
+            `;
+            thumbsEl.appendChild(div);
+          });
+        } else {
+          thumbsEl.innerHTML = "<div style='color:#666'>No cropped threats to display.</div>";
+        }
+
+        statusEl.style.color = 'green';
+        statusEl.innerText = "Processing complete.";
+      } catch (err) {
+        console.error(err);
+        statusEl.style.color = '#ff4d4f';
+        statusEl.innerText = "A client-side processing error occurred.";
+      } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.innerText = "Upload & Analyze";
+      }
+    });
+  </script>
+</body>
+</html>
